@@ -188,7 +188,7 @@ gmake = mk(benchmark = gmake.runner, nonConst = True)
 import gmake_qemu
 gmake_qemu = mk(benchmark = gmake_qemu.runner, nonConst = True)
 
-import fsgmake
+"""import fsgmake
 fsgmake = mk(benchmark = fsgmake.runner, nonConst = True)
 
 ##################################################################
@@ -323,7 +323,7 @@ exim_qemu *= mk(clients = 160)
 #
 # bufferCache - The size of the Postgres buffer cache, in megabytes.
 
-"""import postgres
+import postgres
 
 postgres = mk(benchmark = postgres.runner, nonConst = True)
 
