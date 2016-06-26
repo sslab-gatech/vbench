@@ -116,7 +116,7 @@ class QemuVMDeamon(Task, SourceFileProvider):
         p = self.host.r.run(["uname", "-r"], stdout = CAPTURE)
 	kversion = p.stdoutReadline().strip("\n")
 	self.__proc = self.host.sudo.run(
-            ["qemu-system-x86_64",
+            ["%s/../src/qemu/x86_64-softmmu/qemu-system-x86_64" % (self.benchRoot),
 	    "--enable-kvm", "-m", "32G", "-device",
 	    "virtio-serial-pci,id=virtio-serial0,bus=pci.0,addr=0x6",
 	    "-drive",
@@ -168,7 +168,7 @@ class QemuVMDeamon(Task, SourceFileProvider):
 __all__.append("PerfRecording")
 class PerfRecording(Task):
     def __init__(self, host, perfFile, perfRecord, perfBin,
-            perfKVMRec = False, guestOnlyRec = False):
+            perfKVMRec = False, guestOnlyRec = False, perfProbe = False):
 	Task.__init__(self, host = host)
 	self.host = host
 	self.perfFile = perfFile
@@ -177,6 +177,10 @@ class PerfRecording(Task):
 	self.__perfProc = None
         self.perfKVMRec = perfKVMRec
 	self.guestOnlyRec = guestOnlyRec
+        self.perfProbe = perfProbe
+        self.probeEvents = []
+        self.probeFile = os.path.join(os.path.abspath(
+            os.path.dirname(__file__)), "perf-probe.conf")
 
     def __enter__(self):
 	if self.perfRecord is True:
@@ -185,9 +189,14 @@ class PerfRecording(Task):
             maybeMakedirs(resultDir)
             print >> sys.stderr, "perf record begins..."
             if self.perfKVMRec is False and self.guestOnlyRec is False:
-                self.__perfProc = self.host.sudo.run([self.perfBin,
-                    "record", "-F", "100", "-a", "--call-graph", "dwarf",
-		    "-o", self.perfFile], wait=False)
+                perfArg = [self.perfBin, "record", "-F", "100",
+                        "-a", "--call-graph", "dwarf", "-o", self.perfFile]
+                if self.perfProbe is True:
+                    self._addProbeEvents()
+                    for i in self.probeEvents:
+                        perfArg.append("-e")
+                        perfArg.append("probe:" + i)
+                self.__perfProc = self.host.sudo.run(perfArg, wait=False)
 	    elif self.perfKVMRec is True and self.guestOnlyRec is False:
                 # need to scp both guest.modules and guest.kallsyms
                 guestSyms = "guest.kallsyms"
@@ -222,7 +231,26 @@ class PerfRecording(Task):
 		self.__perfProc.kill(signal.SIGINT)
 		time.sleep(2)
 		self.host.sudo.run(["chmod", "755", self.perfFile])
+                if self.perfProbe is True:
+                    self._removeProbeEvents()
 	    print >> sys.stderr, "perf record ends..."
+
+    def _addProbeEvents(self):
+        a = open(self.probeFile).read().splitlines()
+        for i in a:
+            if i[-1:] is '1':
+                self.probeEvents.append(i[:-2])
+                self.__modifyTracePoints(i[:-2], "--add")
+
+    def _removeProbeEvents(self):
+        import time
+        time.sleep(20)
+        for i in self.probeEvents:
+            self.__modifyTracePoints(i, "--del")
+
+    def __modifyTracePoints(self, event, arg):
+        self.host.sudo.run([self.perfBin,
+            "probe", arg, event])
 
 __all__.append("KVMTrace")
 class KVMTrace(Task):

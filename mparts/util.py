@@ -23,70 +23,116 @@ HOWTO_MKFS = {
     "ext2":"-F",
     "ext3":"-F",
     "ext4":"-F",
+    "ext4_no_jnl":"-F",
+    "ext4_sep_jnl":"-F",
     "xfs":"-f",
     "btrfs":"-f",
     "jfs":"-q",
     "reiserfs":"-q",
 }
 
-LOOPDEV = "/dev/loop2"
-NVMEDEV = "/dev/nvme0n1p1"
-DISK_SIZE = "32G"
+LOOPDEV     = "/dev/loop2"
+NVMEDEV     = "/dev/nvme0n1p1"
+SSDDEV      = "/dev/sdc1"
+HDDDEV      = "/dev/sdd1"
+JNLMED      = "/dev/sdx"
+DISK_SIZE   = "32G"
+
+MEDIUM = {
+    "ssd": SSDDEV,
+    "hdd": HDDDEV,
+    "nvme":NVMEDEV,
+}
+
 CURRPATH = os.path.abspath(".")
 TMPPATH = os.path.join(CURRPATH, ".tmp")
 DISKPATH = os.path.join(TMPPATH, "disk.img")
+MOSPATH = "/tmp/mosbench"
 
-def execCmd(cmd):
+def __execCmd(cmd):
     import subprocess
     p = subprocess.Popen(cmd, shell = True,
             stdout = None, stderr = None)
     p.wait()
     return p
 
-def attachLoopdev(loopdev, target):
-    return execCmd("sudo losetup %s %s" %
+def _attachLoopdev(loopdev, target):
+    return __execCmd("sudo losetup %s %s" %
             (loopdev, target)).returncode == 0
 
-def detachLoopdev(loopdev = LOOPDEV):
-    execCmd("sudo losetup -d %s" % (loopdev))
+def _detachLoopdev(loopdev = LOOPDEV):
+    return __execCmd("sudo losetup -d %s" % (loopdev))
 
-def createDisk(target):
-    execCmd("dd if=/dev/zero of=%s bs=1G "
+def _createDisk(target):
+    __execCmd("dd if=/dev/zero of=%s bs=1G "
             "count=1024000" % (target))
 
-def mount_tmpfs(mnt_path):
-    p = execCmd("sudo mount -t tmpfs -o mode=0777,size="
+def _mount_tmpfs(fsType, mnt_path):
+    maybeMakedirs(mnt_path)
+    p = __execCmd("sudo mount -t tmpfs -o mode=0777,size="
             "%s none %s" % (DISK_SIZE, mnt_path))
-    return p.returncode == 0
-
-def umountDisk(target):
-    execCmd("sudo umount %s" % target)
-
-def initializeDisk(fsType, noCPUs):
-    # in case, if it was killed
-    deinitializeDisk(fsType)
-    testPath = os.path.join("/tmp/mosbench", fsType)
-
-    maybeMakedirs(TMPPATH)
-    if not mount_tmpfs(TMPPATH):
+    if p.returncode is not 0:
         raise ValueError("unable to mount")
-    createDisk(DISKPATH)
-    if attachLoopdev(LOOPDEV, DISKPATH) is False:
+    _createDisk(DISKPATH)
+    if _attachLoopdev(LOOPDEV, DISKPATH) is False:
         raise ValueError("unable to attach loopdevice")
-
-    p = execCmd("sudo mkfs." + fsType
-		+ " " + HOWTO_MKFS.get(fsType)
-		+ " " + LOOPDEV)
+    p = _createfsType(fsType, LOOPDEV)
     if p.returncode is not 0:
         raise ValueError("mkfs failed")
 
-    execCmd("sudo mkdir -p %s" % (testPath))
-    p = execCmd("sudo mount -t %s %s %s" %
-            (fsType, LOOPDEV, testPath))
+def _umountDisk(target):
+    __execCmd("sudo umount %s" % target)
+
+def _createfsType(fsType, medium):
+    if "jnl" in fsType:
+        return __execCmd("sudo mkfs.ext4 " +
+                HOWTO_MKFS.get(fsType, "") +
+                " " + medium)
+    return __execCmd("sudo mkfs." + fsType
+		+ " " + HOWTO_MKFS.get(fsType, "")
+		+ " " + medium)
+
+def _initalizePhysicalDisk(fsType, medium, noCPUs, testPath):
+    medium = MEDIUM.get(medium)
+    p = _createfsType(fsType, medium)
     if p.returncode is not 0:
-        raise ValueError("mounting failed")
+        raise ValueError("mkfs failed")
+    _createDirectoryEnv(noCPUs, medium, fsType, testPath)
+
+def initializeDisk(fsType, medium, noCPUs):
+    # in case, if it was killed
+    deinitializeDisk(fsType, medium)
+    testPath = os.path.join(MOSPATH, fsType)
+
+    if medium is not "tmpfs":
+        return _initalizePhysicalDisk(fsType, medium,
+                                    noCPUs, testPath)
+
+    _mount_tmpfs(fsType, TMPPATH)
+    _createDirectoryEnv(noCPUs, LOOPDEV, fsType, testPath)
+
+def _createDirectoryEnv(noCPUs, medium, fsType, testPath):
+    __execCmd("sudo mkdir -p %s" % (testPath))
+    if "jnl" in fsType:
+        dev = LOOPDEV
+        if "tmpfs" not in medium:
+            dev = medium
+        p = __execCmd("sudo tune2fs -O ^has_journal %s" %
+                dev)
+        if p.returncode is not 0:
+            raise ValueError("no journal mode for ext4 failed")
+        p = __execCmd("sudo mount -t %s %s %s" %
+                ("ext4", medium, testPath))
+        if p.returncode is not 0:
+            raise ValueError("mounting failed")
+    else:
+        p = __execCmd("sudo mount -t %s %s %s" %
+            (fsType, medium, testPath))
+        if p.returncode is not 0:
+            raise ValueError("mounting failed")
+
     # need to own the directory!
-    execCmd("sudo chown %s:%s %s/ -R" %
+    __execCmd("sudo chown %s:%s %s/ -R" %
 	(os.getuid(), os.getgid(), testPath))
     # copying what mkmounts does
     for i in range(noCPUs+1):
@@ -100,18 +146,18 @@ def initializeDisk(fsType, noCPUs):
 	maybeMakedirs(os.path.join(baseSpoolDir, chr(i)))
 	maybeMakedirs(os.path.join(baseSpoolDir, chr(i).title()))
 
-def deinitializeDisk(fsType):
-    testPath = os.path.join("/tmp/mosbench", fsType)
+def deinitializeDisk(fsType, medium):
+    testPath = os.path.join(MOSPATH, fsType)
     if os.path.exists(testPath):
-	    umountDisk(testPath)
-    detachLoopdev()
+	    _umountDisk(testPath)
+    p = _detachLoopdev()
     if os.path.exists(testPath):
-	deleteDirectory(testPath)
+		_deleteDirectory(testPath)
     if os.path.exists(TMPPATH):
-        umountDisk(TMPPATH)
-	deleteDirectory(TMPPATH)
+        _umountDisk(TMPPATH)
+	_deleteDirectory(TMPPATH)
 
-def deleteDirectory(p):
+def _deleteDirectory(p):
     """ deleting a directory with everything """
     for root, dirs, files in os.walk(p, topdown = False):
 	for name in files:

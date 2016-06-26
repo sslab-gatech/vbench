@@ -16,10 +16,10 @@ LINUX = os.path.join(ROOT, "tmp", "linux-3.18")
 LINUXSRC = os.path.join(ROOT, "..", "src", "linux")
 VMROOT = "/root/bench/vm-scalability/bench"
 VMLINUX = os.path.join(VMROOT, "tmp", "linux-3.18")
-PERFBIN = os.path.join("/home/sanidhya/research/linux/tools/perf/perf")
+PERFBIN = os.path.join("~/linux/tools/perf/perf")
 TRY   = 1
 CPU_STEP = 10
-CPU_CNTS = 160
+CPU_CNTS = 80
 CORES_PER_SOCKET = 10
 
 # If set to True, do as few experiments as quickly as possible to test
@@ -60,6 +60,9 @@ parser.add_option("-m", "--multivm",
         action="store_true", default=False)
 parser.add_option("--fs-type", dest="fsType",
         help="Specify fs type", default="")
+parser.add_option("--medium", dest="medium",
+        help="Specify the medium to perform benchmarking",
+        default="tmpfs")
 parser.add_option("--base-dir", dest="baseFSPath",
         help="Specify the path on which the experiment needs " \
               "to be done, it must exist, else the experiment will fail",
@@ -72,6 +75,9 @@ parser.add_option("--kvm-stat", dest="kvmStat",
         action="store_true", default=False)
 parser.add_option("--trace-kvm", dest="kvmTrace",
         help="get the results using trace-cmd",
+        action="store_true", default=False)
+parser.add_option("--probe", dest="perfProbe",
+        help="use probing to know the stats",
         action="store_true", default=False)
 (opts, args) = parser.parse_args()
 
@@ -135,7 +141,7 @@ shared *= mk(noCaching = opts.noCaching)
 if opts.fsType is "":
     shared *= mk(fs = "tmpfs-separate")
 else:
-    initializeDisk(opts.fsType, CPU_CNTS)
+    initializeDisk(opts.fsType, opts.medium, CPU_CNTS)
     shared *= mk(fs = opts.fsType)
 
 # trials is the number of times to run each benchmark.  The best
@@ -160,7 +166,7 @@ if sanityRun:
     shared *= mk(cores = [int(opts.cores)], nonConst = True)
 else:
     #shared *= mk(cores = [1] + range(0, CPU_CNTS+1, CPU_STEP)[1:], nonConst = True)
-    shared *= mk(cores = range(CPU_CNTS, 0, -CPU_STEP) + [1], nonConst = True)
+    shared *= mk(cores = range(CPU_CNTS, 0, -CPU_STEP) + [4] + [2] + [1], nonConst = True)
 
 # perf record and perf stat option globally
 shared *= mk(pstat = False if opts.precord is True else opts.pstat)
@@ -172,6 +178,7 @@ shared *= mk(lockStats = opts.lockStats)
 shared *= mk(multiVM = opts.multivm)
 shared *= mk(kvmStat = opts.kvmStat)
 shared *= mk(kvmTrace = opts.kvmTrace)
+shared *= mk(perfProbe = opts.perfProbe)
 
 # pinning task
 shared *= mk(qpin = opts.qpin)
@@ -187,76 +194,6 @@ gmake = mk(benchmark = gmake.runner, nonConst = True)
 # gmake_qemu
 import gmake_qemu
 gmake_qemu = mk(benchmark = gmake_qemu.runner, nonConst = True)
-
-"""import fsgmake
-fsgmake = mk(benchmark = fsgmake.runner, nonConst = True)
-
-##################################################################
-# Metis
-#
-# streamflow - Whether or not to use the Streamflow parallel
-# allocator.
-#
-# model - The memory allocation model to use.  Either "default" to use
-# 4K pages or "hugetlb" to 2M pages.  "hugetlb" requires the
-# Streamflow allocator.
-#
-# order - The sequence to assign cores in.  "seq" or "rr".
-# XXX: currently, hugetlb is not working, streamflow seg faults
-
-import metis
-metis = mk(benchmark = metis.runner, nonConst = True)
-metis *= mk(streamflow = True)
-metis *= mk(model = ["default"])
-metis *= mk(order = ["rr"])
-
-
-import metis_qemu
-metis_qemu = mk(benchmark = metis_qemu.runner, nonConst = True)
-metis_qemu *= mk(streamflow = True)
-metis_qemu *= mk(model = ["default"])
-metis_qemu *= mk(order = ["rr"])
-
-##################################################################
-# psearchy
-#
-# mode - The mode to run mkdb in.  Must be "thread" or "process".
-#
-# seq - The sequence to assign cores in.  Must be "seq" for sequential
-# assignment or "rr" for round-robin assignment.
-#
-# mem - How much memory to allocate to the hash table on each core, in
-# megabytes.
-#
-# dblim - The maximum number of entries to store per Berkeley DB file.
-# None for no limit.
-import psearchy
-
-psearchy = mk(benchmark = psearchy.runner, nonConst = True)
-
-if sanityRun:
-    psearchy *= (mk(mode = ["thread"]) * mk(order = ["seq"]))#  +
-#                 mk(mode = ["process"]) * mk(order = ["seq", "rr"]))
-else:
-    psearchy *= (mk(mode = ["thread"]) * mk(order = ["seq"])) # +
-#                 mk(mode = ["process"]) * mk(order = ["seq", "rr"]))
-psearchy *= mk(mem = 128)
-psearchy *= mk(dblim = 200000)
-
-
-# psearchy_qemu
-import psearchy_qemu
-
-psearchy_qemu = mk(benchmark = psearchy_qemu.runner, nonConst = True)
-
-if sanityRun:
-    psearchy_qemu *= (mk(mode = ["thread"]) * mk(order = ["seq"]))# +
-#                 mk(mode = ["process"]) * mk(order = ["seq"]))
-else:
-    psearchy_qemu *= (mk(mode = ["thread"]) * mk(order = ["seq"]))# +
-#                 mk(mode = ["process"]) * mk(order = ["seq", "rr"]))
-psearchy_qemu *= mk(mem = 128)
-psearchy_qemu *= mk(dblim = 200000)
 
 ##################################################################
 # Exim
@@ -276,77 +213,46 @@ exim *= mk(eximBuild = "exim-mod")
 exim *= mk(eximPort = 2526)
 exim *= mk(clients = 160)
 
-#exim_qemu
-import exim_qemu
-
-exim_qemu = mk(benchmark = exim_qemu.runner, nonConst = True)
-
-exim_qemu *= mk(eximBuild = "exim-mod")
-exim_qemu *= mk(eximPort = 2526)
-exim_qemu *= mk(clients = 160)
-
 ##################################################################
-# Postgres
+# RocksDB
 #
-# rows - The number of rows in the database.
+# benchmark - name of the benchmark to be selected
 #
-# partitions - The number of tables to split the database across.
+# duration - time to launch (40 seconds by default)
 #
-# batchSize - The number of queries each client should send to
-# Postgres at a time.  This causes the load generator to act like a
-# connection pooler with query aggregation.
+# disable_wal - write ahead logging (disabled by default)
 #
-# randomWritePct - The percentage of queries that should be updates.
+# disable_data_sync - fsycn (disabled by default)
 #
-# sleep - The method Postgres uses to sleep when a lock is taken.  Can
-# be "sysv" for SysV semaphores or "posix" for POSIX semaphores (that
-# is, futexes on Linux).
+# compression_type - data compression (disabled)
 #
-# semasPerSet - For sysv sleep, the number of semaphores per SysV
-# semaphore set.  In the kernel, each semaphore set is protected by
-# one lock.  Ignored for posix sleep.
+# compression_level - level of data compression
 #
-# lwScale - Whether or not to use scalable lightweight locks
-# (read/write mutexes) in Postgres.
+# threads - client threads (2 is more than sufficient)
 #
-# lockScale - Whether or not to use scalable database locks in
-# Postgres.  Enabling scalable database locks requires scalable
-# lightweight locks.
+# max_background_compactions - #threads for data
+# compression (#NCPUs)
 #
-# lockPartitions - The number of partitions for the database lock
-# manager.  Each partition is protected by an underlying lightweight
-# lock.  This must be a power of 2.  The Postgres default is 1<<4.
+# max_background_flushes - #threads for data flush (#NCPUs)
 #
-# malloc - The malloc implementation to use in Postgres.  Must be
-# tcmalloc or glibc.  For tcmalloc, you'll need to install the
-# tcmalloc library.
+# value_size - size of the value corresponding to a key (8192 B)
 #
-# bufferCache - The size of the Postgres buffer cache, in megabytes.
+# readwritepercent - read vs write percentage for
+# readrandomwriterandom workload
+import rocksdb
 
-import postgres
-
-postgres = mk(benchmark = postgres.runner, nonConst = True)
-
-postgres *= mk(postgresClient = hosts.postgresClient)
-
-postgres *= mk(rows = 10000000)
-postgres *= mk(partitions = 0)
-postgres *= mk(batchSize = 256)
-if sanityRun:
-    postgres *= mk(randomWritePct = [5])
-else:
-    postgres *= mk(randomWritePct = [0, 5])
-
-pgopt = (mk(sleep = "sysv") * mk(semasPerSet = 16) *
-         mk(lwScale = True) * mk(lockScale = True) *
-         mk(lockPartitions = 1<<10))
-pgstock = (mk(sleep = "sysv") * mk(semasPerSet = 16) *
-           mk(lwScale = False) * mk(lockScale = False) *
-           mk(lockPartitions = 1<<4))
-
-postgres *= pgopt + pgstock
-postgres *= mk(malloc = "glibc")
-postgres *= mk(bufferCache = 8192)"""
+rocksdb = mk(benchmark = rocksdb.runner, nonConst = True)
+rocksdb *= (mk(benchName = ["overwrite"]) +
+           mk(benchName = ["appendrandom"]) +
+           mk(benchName  = ["readrandomwriterandom"]))
+rocksdb *= mk(duration = 40)
+rocksdb *= mk(dataSync = False)
+rocksdb *= mk(disableWAL = False)
+rocksdb *= mk(compressionType = "none")
+rocksdb *= mk(compressionLevel = 0)
+rocksdb *= mk(clientThreads = 2)
+rocksdb *= mk(valueSize = 8192)
+rocksdb *= mk(rdwrPercent = 50)
 
 ##################################################################
 # Complete configuration
@@ -397,7 +303,4 @@ if __name__ == "__main__":
         cfg.benchmark.run(m, cfg)
     # its cleanup time!
     if opts.fsType is not "":
-        deinitializeDisk(opts.fsType)
-
-
-
+        deinitializeDisk(opts.fsType, opts.medium)

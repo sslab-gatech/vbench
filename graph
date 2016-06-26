@@ -31,6 +31,8 @@ SCALE = {"MakeKernel" : (("hour", 60*60), ("secs", 1)),
 
          "MemcachedLoad" : (("sec", 1), ("microsecs", 1000*1000)),
          "MemcachedQemuLoad" : (("sec", 1), ("microsecs", 1000*1000)),
+
+         "RocksDBLoad" : (("sec", 1), ("microsecs", 1000*1000)),
          }
 
 def parseArgs(args):
