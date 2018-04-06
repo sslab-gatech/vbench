@@ -138,6 +138,8 @@ kvm_counters.extend(tag_with("kvm_exits",
   Counter("mmio_exits",          "VM exits (MMIO)"),
   Counter("signal_exits",        "VM exits (host signal)"),
   Counter("halt_exits",          "VM exits (halt)"),
+  Counter("vcs",                 "vCS (lock+rcu+intr)"),
+  Counter("fake_vcs",            "vCS (mutex+rwsem)"),
   Counter("halt_wakeup",         "Halt wakeups")))
 
 kvm_counters.extend(tag_with("kvm_intr",
