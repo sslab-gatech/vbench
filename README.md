@@ -16,7 +16,6 @@ VM as well.
 
 - First compile the relevant benchmarks as follows:
   - Exim: `make all-exim`
-  - Psearch: `make all-psearchy`
   - Psearchy: `make all-psearchy`
   - Metis: `make all-metis`
   - Hist: `make all-hist`
